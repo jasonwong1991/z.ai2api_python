@@ -223,11 +223,12 @@ class ZAITransformer:
         self.auth_url = f"{self.base_url}/api/v1/auths/"
 
         # 模型映射
+        # 注意：0727-106B-API 可能已过时，统一使用 GLM-4-6-API-V1
         self.model_mapping = {
-            settings.PRIMARY_MODEL: "0727-360B-API",  # GLM-4.5
-            settings.THINKING_MODEL: "0727-360B-API",  # GLM-4.5-Thinking
-            settings.SEARCH_MODEL: "0727-360B-API",  # GLM-4.5-Search
-            settings.AIR_MODEL: "0727-106B-API",  # GLM-4.5-Air
+            settings.PRIMARY_MODEL: "GLM-4-6-API-V1",  # GLM-4.5 -> GLM-4.6
+            settings.THINKING_MODEL: "GLM-4-6-API-V1",  # GLM-4.5-Thinking -> GLM-4.6
+            settings.SEARCH_MODEL: "GLM-4-6-API-V1",  # GLM-4.5-Search -> GLM-4.6
+            settings.AIR_MODEL: "GLM-4-6-API-V1",  # GLM-4.5-Air -> GLM-4.6
             settings.GLM_46_MODEL: "GLM-4-6-API-V1",  # GLM-4.6
             settings.GLM_46_THINKING_MODEL: "GLM-4-6-API-V1",  # GLM-4.6-Thinking
         }
