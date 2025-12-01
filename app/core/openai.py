@@ -296,7 +296,8 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                     break  # 跳出内层循环，外层循环会检查 stream_done
                                                 continue
 
-                                            # debug_log(f"📦 解析数据块: {chunk_str[:200]}..." if len(chunk_str) > 200 else f"📦 解析数据块: {chunk_str}")
+                                            # 打印 Z.AI 返回的原始内容
+                                            debug_log(f"📦 Z.AI原始数据: {chunk_str[:500]}..." if len(chunk_str) > 500 else f"📦 Z.AI原始数据: {chunk_str}")
 
                                             try:
                                                 chunk = json.loads(chunk_str)
@@ -305,9 +306,15 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                     data = chunk.get("data", {})
                                                     phase = data.get("phase")
 
+                                                    # 详细记录每个数据块的关键字段
+                                                    debug_log(f"📊 解析结果: type={chunk.get('type')}, phase={phase}, "
+                                                             f"delta_content长度={len(data.get('delta_content') or '')}, "
+                                                             f"edit_content长度={len(data.get('edit_content') or '')}, "
+                                                             f"done={data.get('done')}, usage={bool(data.get('usage'))}")
+
                                                     # 记录每个阶段（只在阶段变化时记录）
                                                     if phase and phase != getattr(stream_response, '_last_phase', None):
-                                                        debug_log(f"📈 SSE 阶段: {phase}")
+                                                        debug_log(f"📈 SSE 阶段变化: {getattr(stream_response, '_last_phase', 'None')} -> {phase}")
                                                         stream_response._last_phase = phase
 
                                                     # 处理思考内容
@@ -629,6 +636,10 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                             yield "data: [DONE]\n\n"
                                                             done_sent = True
 
+                                                else:
+                                                    # 非 chat:completion 类型，记录日志
+                                                    debug_log(f"⚠️ 未处理的消息类型: {chunk.get('type')}, 完整内容: {chunk_str[:300]}")
+
                                             except json.JSONDecodeError as e:
                                                 debug_log(f"❌ JSON解析错误: {e}, 内容: {chunk_str[:200]}")
                                             except Exception as e:
@@ -651,6 +662,11 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                 if time.time() - last_activity > 30:  # 30秒超时
                                     debug_log("⚠️ 检测到长时间无活动，可能连接中断")
                                     break
+
+                            # 流结束时的状态日志
+                            debug_log(f"📋 流结束状态: stream_done={stream_done}, finish_sent={finish_sent}, "
+                                     f"done_sent={done_sent}, has_thinking={has_thinking}, "
+                                     f"thinking_closed={thinking_closed}, first_thinking_chunk={first_thinking_chunk}")
 
                             # 确保发送结束信号（仅在尚未发送时）
                             if not finish_sent:
