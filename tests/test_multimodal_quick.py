@@ -10,7 +10,7 @@ tiny_red_image = (
 )
 
 # API配置
-api_url = "http://localhost:8080/v1/chat/completions"
+api_url = "http://localhost:8084/v1/chat/completions"
 api_key = "sk-your-api-key"
 
 # 构建正确的多模态请求

@@ -44,7 +44,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 python main.py
 ```
 
-服务启动后访问：http://localhost:8080/docs
+服务启动后访问：http://localhost:8084/docs
 
 ### 基础使用
 
@@ -55,7 +55,7 @@ import openai
 
 # 初始化客户端
 client = openai.OpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="http://localhost:8084/v1",
     api_key="your-auth-token"  # 替换为你的 AUTH_TOKEN
 )
 
@@ -143,7 +143,7 @@ for chunk in response:
 | --------------------- | ----------------------------------------- | ---------------------- |
 | `AUTH_TOKEN`          | `sk-your-api-key`                         | 客户端认证密钥         |
 | `API_ENDPOINT`        | `https://chat.z.ai/api/chat/completions`  | 上游 API 地址          |
-| `LISTEN_PORT`         | `8080`                                    | 服务监听端口           |
+| `LISTEN_PORT`         | `8084`                                    | 服务监听端口           |
 | `DEBUG_LOGGING`       | `true`                                    | 调试日志开关           |
 | `THINKING_PROCESSING` | `think`                                   | 思考内容处理策略       |
 | `ANONYMOUS_MODE`      | `true`                                    | 匿名模式开关           |
@@ -258,7 +258,7 @@ BACKUP_TOKEN=sk-token-1,sk-token-2,sk-token-3
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="http://localhost:8084/v1",
     api_key="your-token"
 )
 
@@ -320,7 +320,7 @@ A: 创建 [zai.js](https://gist.githubusercontent.com/musistudio/b35402d6f9c95c6
   "Providers": [
     {
       "name": "GLM",
-      "api_base_url": "http://127.0.0.1:8080/v1/chat/completions",
+      "api_base_url": "http://127.0.0.1:8084/v1/chat/completions",
       "api_key": "sk-your-api-key",
       "models": ["GLM-4.5", "GLM-4.5-Air"],
       "transformers": {

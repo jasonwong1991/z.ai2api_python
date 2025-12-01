@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     GLM_46_THINKING_MODEL: str = os.getenv("GLM_46_THINKING_MODEL", "GLM-4.6-Thinking")
     
     # Server Configuration
-    LISTEN_PORT: int = int(os.getenv("LISTEN_PORT", "8080"))
+    LISTEN_PORT: int = int(os.getenv("LISTEN_PORT", "8084"))
     DEBUG_LOGGING: bool = os.getenv("DEBUG_LOGGING", "true").lower() == "true"
     
     # Feature Configuration

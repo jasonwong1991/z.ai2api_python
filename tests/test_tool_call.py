@@ -8,7 +8,7 @@ import json
 import requests
 
 # 配置
-BASE_URL = "http://localhost:8080"
+BASE_URL = "http://localhost:8084"
 API_KEY = "your-api-key"  # 替换为实际的 API key
 
 def test_tool_call():
