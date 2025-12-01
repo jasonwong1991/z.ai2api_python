@@ -1,6 +1,6 @@
 services:
   z-ai2api:
-    image: jasonwong1991/z-ai2api-python:latest
+    image: ghcr.io/jasonwong1991/z.ai2api_python:latest
     container_name: z-ai2api-python
     ports:
       - "8084:8080"

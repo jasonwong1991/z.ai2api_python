@@ -1,6 +1,6 @@
 services:
   z-ai2api:
-    image: jasonwong1991/z-ai2api-python:latest
+    image: ghcr.io/jasonwong1991/z.ai2api_python:latest
     container_name: z-ai2api-python
     # 使用宿主机网络模式，可以直接访问局域网设备
     network_mode: "host"
