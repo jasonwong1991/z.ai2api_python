@@ -13,7 +13,11 @@ from app.core import openai
 from app.api import admin
 from app.utils.reload_config import RELOAD_CONFIG
 
-from granian import Granian
+try:
+    from granian import Granian
+    HAS_GRANIAN = True
+except ImportError:
+    HAS_GRANIAN = False
 
 # Create FastAPI app
 app = FastAPI(
@@ -49,14 +53,23 @@ async def root():
 
 
 def run_server():
-    Granian(
-        "main:app",
-        interface="asgi",
-        address="0.0.0.0",
-        port=settings.LISTEN_PORT,
-        reload=False,   # 生产环境请关闭热重载
-        **RELOAD_CONFIG,
-    ).serve()
+    if HAS_GRANIAN:
+        Granian(
+            "main:app",
+            interface="asgi",
+            address="0.0.0.0",
+            port=settings.LISTEN_PORT,
+            reload=False,
+            **RELOAD_CONFIG,
+        ).serve()
+    else:
+        import uvicorn
+        uvicorn.run(
+            "main:app",
+            host="0.0.0.0",
+            port=settings.LISTEN_PORT,
+            reload=False,
+        )
 
 
 if __name__ == "__main__":

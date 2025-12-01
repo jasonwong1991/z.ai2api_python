@@ -37,26 +37,43 @@ def decode_jwt_payload(token: str) -> Dict[str, Any]:
 
 def zs(e: str, t: str, timestamp: int) -> Dict[str, str]:
     """
-    生成Z.AI API签名
-    
+    生成Z.AI API签名 (匹配最新的 JavaScript zs 函数)
+
     Args:
-        e: 签名字符串，格式为 "requestId,{requestId},timestamp,{timestamp},user_id,{user_id}"
-        t: 最近一次user content
+        e: 签名元数据字符串，格式为 "requestId,{requestId},timestamp,{timestamp},user_id,{user_id}"
+        t: 最近一次user content (用于签名的提示词)
         timestamp: 时间戳（毫秒）
-        
+
     Returns:
         包含签名和时间戳的字典
     """
-    r = str(timestamp)
-    i = f"{e}|{t}|{r}"
-    n = timestamp // (5 * 60 * 1000)
-    key = "junjie".encode('utf-8')
-    o = hmac.new(key, str(n).encode('utf-8'), hashlib.sha256).hexdigest()
-    signature = hmac.new(o.encode('utf-8'), i.encode('utf-8'), hashlib.sha256).hexdigest()
+    # r = Number(s) - 时间戳数值
+    r = timestamp
+    # i = s - 时间戳字符串
+    i = str(timestamp)
+
+    # a = n.encode(t) - UTF-8 编码用户内容
+    a = t.encode('utf-8')
+
+    # w = btoa(String.fromCharCode(...a)) - Base64 编码
+    w = base64.b64encode(a).decode('ascii')
+
+    # c = `${e}|${w}|${i}` - 构建签名字符串
+    c = f"{e}|{w}|{i}"
+
+    # E = Math.floor(r / (5 * 60 * 1e3)) - 计算时间窗口
+    E = r // (5 * 60 * 1000)
+
+    # A = CryptoJS.HmacSHA256(`${E}`, "key-@@@@)))()((9))-xxxx&&&%%%%%")
+    secret = "key-@@@@)))()((9))-xxxx&&&%%%%%"
+    A = hmac.new(secret.encode('utf-8'), str(E).encode('utf-8'), hashlib.sha256).hexdigest()
+
+    # k = CryptoJS.HmacSHA256(c, A).toString()
+    k = hmac.new(A.encode('utf-8'), c.encode('utf-8'), hashlib.sha256).hexdigest()
 
     return {
-        "signature": signature,
-        "timestamp": timestamp
+        "signature": k,
+        "timestamp": i
     }
 
 

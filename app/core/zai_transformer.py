@@ -407,8 +407,8 @@ class ZAITransformer:
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0"
         dynamic_headers = get_dynamic_headers(chat_id, user_agent)
         
-        # 确保X-FE-Version与参考文档一致
-        dynamic_headers["X-FE-Version"] = "prod-fe-1.0.95"
+        # 确保X-FE-Version与官方最新版本一致
+        dynamic_headers["X-FE-Version"] = "prod-fe-1.0.139"
         
         # 构建查询参数
         query_params = build_query_params(timestamp, request_id, token, user_agent, chat_id)

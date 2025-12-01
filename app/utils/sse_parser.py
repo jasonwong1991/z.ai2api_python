@@ -99,19 +99,35 @@ class SSEParser:
             model_class: Optional Pydantic model class for validation
 
         Yields:
-            dict: JSON data events
+            dict: JSON data events (including heartbeat and validation failures)
         """
         for event in self.iter_events():
-            if event["type"] == "data" and event.get("is_json", True):
-                try:
-                    if model_class:
-                        data = model_class.model_validate_json(event["raw"])
-                        yield {"type": "data", "data": data, "raw": event["raw"]}
-                    else:
-                        yield event
-                except Exception as e:
-                    self.debug_log(f"数据验证失败: {e}")
-                    continue
+            if event["type"] != "data" or not event.get("is_json", True):
+                continue
+
+            payload = event.get("data")
+
+            # Handle heartbeat messages - they keep connections alive but carry no content
+            if isinstance(payload, dict) and payload.get("type") == "heartbeat":
+                yield {"type": "heartbeat", "data": payload, "raw": event["raw"]}
+                continue
+
+            if not model_class:
+                yield event
+                continue
+
+            try:
+                data = model_class.model_validate(payload)
+                yield {"type": "data", "data": data, "raw": event["raw"]}
+            except Exception as e:
+                self.debug_log(f"数据验证失败: {e}")
+                # Don't silently skip - yield raw payload with error info for upstream handling
+                yield {
+                    "type": "data",
+                    "data": payload,
+                    "raw": event["raw"],
+                    "validation_error": str(e),
+                }
 
     def close(self) -> None:
         """Close the response connection"""

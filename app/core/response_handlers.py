@@ -4,7 +4,7 @@ Response handlers for streaming and non-streaming responses
 
 import json
 import time
-from typing import Generator, Optional
+from typing import Any, Dict, Generator, Optional
 import requests
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -42,8 +42,8 @@ def create_openai_response_chunk(
 
 def handle_upstream_error(error: UpstreamError) -> Generator[str, None, None]:
     """Handle upstream error response"""
-    debug_log(f"上游错误: code={error.code}, detail={error.detail}")
-    
+    debug_log(f"上游错误: detail={error.detail}, code={error.code}, content={error.content}")
+
     # Send end chunk
     end_chunk = create_openai_response_chunk(
         model=settings.PRIMARY_MODEL,
@@ -204,25 +204,54 @@ class StreamResponseHandler(ResponseHandler):
         try:
             with SSEParser(response, debug_mode=settings.DEBUG_LOGGING) as parser:
                 for event in parser.iter_json_data(UpstreamData):
-                    upstream_data = event['data']
-                    
+                    # Handle heartbeat messages - skip them but don't block
+                    if event.get("type") == "heartbeat":
+                        debug_log("收到上游心跳信号，继续等待数据")
+                        continue
+
+                    # Handle validation failures - try to extract error from raw payload
+                    if event.get("validation_error"):
+                        debug_log(f"解析SSE数据失败，回退原始payload: {event['validation_error']}")
+
+                    upstream_payload = event["data"]
+
+                    # If validation failed, upstream_payload is a raw dict, not UpstreamData
+                    if not isinstance(upstream_payload, UpstreamData):
+                        if isinstance(upstream_payload, dict):
+                            # Try to extract error from raw payload
+                            payload_error = self._extract_error_from_payload(upstream_payload)
+                            if payload_error:
+                                yield from handle_upstream_error(payload_error)
+                                stream_ended_normally = True
+                                break
+
+                            # Check if raw payload signals done
+                            if self._payload_signals_done(upstream_payload):
+                                debug_log("原始payload标记流结束")
+                                yield from self._send_end_chunk()
+                                stream_ended_normally = True
+                                break
+                        continue
+
+                    upstream_data = upstream_payload
+
                     # Check for errors
                     if self._has_error(upstream_data):
                         error = self._get_error(upstream_data)
                         yield from handle_upstream_error(error)
                         stream_ended_normally = True
                         break
-                    
+
                     debug_log(f"解析成功 - 类型: {upstream_data.type}, 阶段: {upstream_data.data.phase}, "
                              f"内容长度: {len(upstream_data.data.delta_content or '')}, 完成: {upstream_data.data.done}")
-                    
+
                     # Process content
                     yield from self._process_content_with_tools(upstream_data, sent_initial_answer)
-                    
+
                     # Update sent_initial_answer flag if we sent content
                     if not sent_initial_answer and (upstream_data.data.delta_content or upstream_data.data.edit_content):
                         sent_initial_answer = True
-                    
+
                     # Check if done
                     if upstream_data.data.done or upstream_data.data.phase == "done":
                         debug_log("检测到流结束信号")
@@ -256,11 +285,33 @@ class StreamResponseHandler(ResponseHandler):
     def _get_error(self, upstream_data: UpstreamData) -> UpstreamError:
         """Get error from upstream data"""
         return (
-            upstream_data.error or 
-            upstream_data.data.error or 
+            upstream_data.error or
+            upstream_data.data.error or
             (upstream_data.data.inner.error if upstream_data.data.inner else None)
         )
-    
+
+    def _extract_error_from_payload(self, payload: Dict[str, Any]) -> Optional[UpstreamError]:
+        """Extract error from raw payload when validation fails"""
+        data_section = payload.get("data")
+        error_section = (
+            data_section.get("error") if isinstance(data_section, dict) else payload.get("error")
+        )
+        if isinstance(error_section, dict):
+            detail = error_section.get("detail") or "Upstream error"
+            return UpstreamError(
+                detail=detail,
+                content=error_section.get("content"),
+                code=error_section.get("code"),
+            )
+        return None
+
+    def _payload_signals_done(self, payload: Dict[str, Any]) -> bool:
+        """Check if raw payload signals stream completion"""
+        data_section = payload.get("data")
+        if isinstance(data_section, dict):
+            return bool(data_section.get("done") or data_section.get("phase") == "done")
+        return False
+
     def _process_content(
         self, 
         upstream_data: UpstreamData, 
@@ -452,14 +503,43 @@ class NonStreamResponseHandler(ResponseHandler):
         try:
             with SSEParser(response, debug_mode=settings.DEBUG_LOGGING) as parser:
                 for event in parser.iter_json_data(UpstreamData):
-                    upstream_data = event['data']
-                    
+                    # Handle heartbeat messages - skip them
+                    if event.get("type") == "heartbeat":
+                        debug_log("收到上游心跳信号，继续等待数据")
+                        continue
+
+                    # Handle validation failures
+                    if event.get("validation_error"):
+                        debug_log(f"解析SSE数据失败: {event['validation_error']}")
+
+                    upstream_payload = event["data"]
+
+                    # If validation failed, upstream_payload is a raw dict
+                    if not isinstance(upstream_payload, UpstreamData):
+                        if isinstance(upstream_payload, dict):
+                            # Check if raw payload has error
+                            data_section = upstream_payload.get("data")
+                            if isinstance(data_section, dict) and data_section.get("error"):
+                                debug_log(f"检测到上游错误: {data_section.get('error')}")
+                                response_completed = True
+                                break
+                            # Check if raw payload signals done
+                            if isinstance(data_section, dict) and (
+                                data_section.get("done") or data_section.get("phase") == "done"
+                            ):
+                                debug_log("原始payload标记流结束")
+                                response_completed = True
+                                break
+                        continue
+
+                    upstream_data = upstream_payload
+
                     if upstream_data.data.delta_content:
                         content = upstream_data.data.delta_content
-                        
+
                         if upstream_data.data.phase == "thinking":
                             content = transform_thinking_content(content)
-                            
+
                             # 处理思考内容的分块格式
                             if not self.in_thinking_phase:
                                 # 进入思考阶段，添加开始标签
@@ -478,10 +558,10 @@ class NonStreamResponseHandler(ResponseHandler):
                                     full_content.append("</think>")
                                 self.in_thinking_phase = False
                                 self.first_thinking_chunk = True
-                        
+
                         if content:
                             full_content.append(content)
-                    
+
                     if upstream_data.data.done or upstream_data.data.phase == "done":
                         debug_log("检测到完成信号，停止收集")
                         response_completed = True

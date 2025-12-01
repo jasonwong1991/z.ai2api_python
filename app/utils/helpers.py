@@ -94,18 +94,19 @@ def get_browser_headers(referer_chat_id: str = "") -> Dict[str, str]:
     # 构建动态 Headers
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
+        "Accept": "*/*",
         "User-Agent": user_agent,
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7",
+        "Accept-Language": "zh-CN",
         "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
+        "sec-ch-ua-platform": '"macOS"',
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-origin",
-        "X-FE-Version": "prod-fe-1.0.70",
+        "X-FE-Version": "prod-fe-1.0.139",
         "Origin": settings.CLIENT_HEADERS["Origin"],
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
+        "Connection": "keep-alive",
     }
     
     # 只有基于 Chromium 的浏览器才添加 sec-ch-ua

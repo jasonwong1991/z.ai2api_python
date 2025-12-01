@@ -102,7 +102,8 @@ class UpstreamError(BaseModel):
     """Upstream error model"""
 
     detail: str
-    code: int
+    content: Optional[str] = None
+    code: Optional[int] = None
 
 
 class UpstreamDataInner(BaseModel):
