@@ -232,6 +232,9 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                             has_thinking = False
                             thinking_signature = None
                             first_thinking_chunk = True
+                            thinking_closed = False  # 跟踪 </think> 是否已发送
+                            finish_sent = False  # 跟踪是否已发送 finish_chunk
+                            done_sent = False  # 跟踪是否已发送 [DONE]
 
                             # 处理SSE流 - 优化的buffer处理
                             buffer = bytearray()
@@ -239,9 +242,12 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                             line_count = 0
                             chunk_count = 0
                             last_activity = time.time()
+                            stream_done = False  # 标记流是否已结束
                             debug_log("📡 开始接收 SSE 流数据...")
 
                             async for chunk in response.aiter_bytes():
+                                if stream_done:
+                                    break
                                 chunk_count += 1
                                 last_activity = time.time()
                                 
@@ -284,8 +290,10 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                             chunk_str = current_line[5:].strip()
                                             if not chunk_str or chunk_str == "[DONE]":
                                                 if chunk_str == "[DONE]":
-                                                    debug_log("📡 收到 [DONE] 信号")
-                                                    yield "data: [DONE]\n\n"
+                                                    # 收到上游 [DONE]，标记流结束
+                                                    debug_log("📡 收到上游 [DONE] 信号，准备结束流")
+                                                    stream_done = True
+                                                    break  # 跳出内层循环，外层循环会检查 stream_done
                                                 continue
 
                                             # debug_log(f"📦 解析数据块: {chunk_str[:200]}..." if len(chunk_str) > 200 else f"📦 解析数据块: {chunk_str}")
@@ -324,6 +332,11 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                             }
                                                             yield f"data: {json.dumps(role_chunk)}\n\n"
 
+                                                        # 如果之前已经闭合过 thinking，需要重新开始新的 thinking 块
+                                                        if thinking_closed:
+                                                            first_thinking_chunk = True
+                                                            thinking_closed = False
+
                                                         delta_content = data.get("delta_content", "")
                                                         if delta_content:
                                                             # 处理思考内容格式
@@ -335,7 +348,7 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                                 )
                                                             else:
                                                                 content = delta_content
-                                                            
+
                                                             # 第一个思考块添加<think>开始标签，其他块保持纯内容
                                                             if first_thinking_chunk:
                                                                 formatted_content = f"<think>{content}"
@@ -391,7 +404,7 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
 
                                                         # 处理思考结束和答案开始
                                                         if edit_content and "</details>\n" in edit_content:
-                                                            if has_thinking and not first_thinking_chunk:
+                                                            if has_thinking and not first_thinking_chunk and not thinking_closed:
                                                                 # 发送思考结束标记</think>
                                                                 thinking_signature = str(int(time.time() * 1000))
                                                                 sig_chunk = {
@@ -413,6 +426,7 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                                     "system_fingerprint": "fp_zai_001",
                                                                 }
                                                                 yield f"data: {json.dumps(sig_chunk)}\n\n"
+                                                                thinking_closed = True  # 标记已闭合
 
                                                             # 提取答案内容
                                                             content_after = edit_content.split("</details>\n")[-1]
@@ -460,6 +474,29 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                                 debug_log("➡️ 发送初始角色chunk")
                                                                 yield f"data: {json.dumps(role_chunk)}\n\n"
 
+                                                            # 如果之前在 thinking 阶段且未闭合，先发送 </think>
+                                                            if not first_thinking_chunk and not thinking_closed:
+                                                                thinking_end_chunk = {
+                                                                    "choices": [
+                                                                        {
+                                                                            "delta": {
+                                                                                "content": "</think>",
+                                                                            },
+                                                                            "finish_reason": None,
+                                                                            "index": 0,
+                                                                            "logprobs": None,
+                                                                        }
+                                                                    ],
+                                                                    "created": int(time.time()),
+                                                                    "id": transformed["body"]["chat_id"],
+                                                                    "model": request.model,
+                                                                    "object": "chat.completion.chunk",
+                                                                    "system_fingerprint": "fp_zai_001",
+                                                                }
+                                                                debug_log("➡️ [answer阶段delta_content] 补发 </think> 结束标签")
+                                                                yield f"data: {json.dumps(thinking_end_chunk)}\n\n"
+                                                                thinking_closed = True
+
                                                             content_chunk = {
                                                                 "choices": [
                                                                     {
@@ -481,8 +518,89 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                             # debug_log(f"➡️ 输出内容块到客户端: {delta_content[:50]}...")
                                                             yield output_data
 
-                                                    # 处理完成 - 当收到usage信息时
-                                                    if data.get("usage"):
+                                                    # 处理 other 阶段 - 可能包含普通内容或工具调用后续
+                                                    elif phase == "other":
+                                                        edit_content = data.get("edit_content", "")
+                                                        delta_content = data.get("delta_content", "")
+
+                                                        # 优先处理 edit_content，其次处理 delta_content
+                                                        content_to_send = ""
+                                                        if edit_content:
+                                                            # 提取 edit_content 中的实际内容
+                                                            if "</details>\n" in edit_content:
+                                                                content_to_send = edit_content.split("</details>\n")[-1]
+                                                            else:
+                                                                content_to_send = edit_content
+                                                        elif delta_content:
+                                                            content_to_send = delta_content
+
+                                                        # 如果有内容需要输出
+                                                        if content_to_send:
+                                                            # 确保已发送角色
+                                                            if not has_thinking:
+                                                                has_thinking = True
+                                                                role_chunk = {
+                                                                    "choices": [
+                                                                        {
+                                                                            "delta": {"role": "assistant"},
+                                                                            "finish_reason": None,
+                                                                            "index": 0,
+                                                                            "logprobs": None,
+                                                                        }
+                                                                    ],
+                                                                    "created": int(time.time()),
+                                                                    "id": transformed["body"]["chat_id"],
+                                                                    "model": request.model,
+                                                                    "object": "chat.completion.chunk",
+                                                                    "system_fingerprint": "fp_zai_001",
+                                                                }
+                                                                debug_log("➡️ [other阶段] 发送初始角色chunk")
+                                                                yield f"data: {json.dumps(role_chunk)}\n\n"
+
+                                                            # 如果之前在 thinking 阶段且未闭合，先发送 </think>
+                                                            if not first_thinking_chunk and not thinking_closed:
+                                                                thinking_end_chunk = {
+                                                                    "choices": [
+                                                                        {
+                                                                            "delta": {
+                                                                                "content": "</think>",
+                                                                            },
+                                                                            "finish_reason": None,
+                                                                            "index": 0,
+                                                                            "logprobs": None,
+                                                                        }
+                                                                    ],
+                                                                    "created": int(time.time()),
+                                                                    "id": transformed["body"]["chat_id"],
+                                                                    "model": request.model,
+                                                                    "object": "chat.completion.chunk",
+                                                                    "system_fingerprint": "fp_zai_001",
+                                                                }
+                                                                debug_log("➡️ [other阶段] 补发 </think> 结束标签")
+                                                                yield f"data: {json.dumps(thinking_end_chunk)}\n\n"
+                                                                thinking_closed = True  # 标记已闭合
+
+                                                            content_chunk = {
+                                                                "choices": [
+                                                                    {
+                                                                        "delta": {
+                                                                            "content": content_to_send,
+                                                                        },
+                                                                        "finish_reason": None,
+                                                                        "index": 0,
+                                                                        "logprobs": None,
+                                                                    }
+                                                                ],
+                                                                "created": int(time.time()),
+                                                                "id": transformed["body"]["chat_id"],
+                                                                "model": request.model,
+                                                                "object": "chat.completion.chunk",
+                                                                "system_fingerprint": "fp_zai_001",
+                                                            }
+                                                            yield f"data: {json.dumps(content_chunk)}\n\n"
+
+                                                    # 处理完成 - 当收到usage信息时（done信号通常伴随usage）
+                                                    if data.get("usage") and not finish_sent:
                                                         debug_log(f"📦 完成响应 - 使用统计: {json.dumps(data['usage'])}")
 
                                                         # 发送完成信号
@@ -505,8 +623,11 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                                         finish_output = f"data: {json.dumps(finish_chunk)}\n\n"
                                                         debug_log("➡️ 发送完成信号")
                                                         yield finish_output
-                                                        debug_log("➡️ 发送 [DONE]")
-                                                        yield "data: [DONE]\n\n"
+                                                        finish_sent = True
+                                                        if not done_sent:
+                                                            debug_log("➡️ 发送 [DONE]")
+                                                            yield "data: [DONE]\n\n"
+                                                            done_sent = True
 
                                             except json.JSONDecodeError as e:
                                                 debug_log(f"❌ JSON解析错误: {e}, 内容: {chunk_str[:200]}")
@@ -531,9 +652,32 @@ async def chat_completions(request: OpenAIRequest, authorization: str = Header(.
                                     debug_log("⚠️ 检测到长时间无活动，可能连接中断")
                                     break
 
-                            # 确保发送结束信号
-                            debug_log("📤 发送最终 [DONE] 信号")
-                            yield "data: [DONE]\n\n"
+                            # 确保发送结束信号（仅在尚未发送时）
+                            if not finish_sent:
+                                # 如果没有收到 usage，也需要发送 finish_chunk
+                                debug_log("📤 补发 finish_chunk（无 usage）")
+                                finish_chunk = {
+                                    "choices": [
+                                        {
+                                            "delta": {},
+                                            "finish_reason": "stop",
+                                            "index": 0,
+                                            "logprobs": None,
+                                        }
+                                    ],
+                                    "created": int(time.time()),
+                                    "id": transformed["body"]["chat_id"],
+                                    "model": request.model,
+                                    "object": "chat.completion.chunk",
+                                    "system_fingerprint": "fp_zai_001",
+                                }
+                                yield f"data: {json.dumps(finish_chunk)}\n\n"
+                                finish_sent = True
+
+                            if not done_sent:
+                                debug_log("📤 发送最终 [DONE] 信号")
+                                yield "data: [DONE]\n\n"
+                                done_sent = True
 
                             debug_log(f"✅ SSE 流处理完成，共处理 {line_count} 行数据，{chunk_count} 个数据块")
                             
